@@ -1,13 +1,17 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.30;
+pragma solidity ^0.8.33;
+import "../interfaces/IProposalEngine.sol";
 
-contract ProposalEngine {
-    error NOT_OWNER();
+contract ProposalEngine is IProposalEngine {
+    error NOT_GOVERNOR();
     error ALREADY_CONFIRMED();
     error ALREADY_EXECUTED();
     error NOT_ENOUGH_CONFIRMATIONS();
     error TIMELOCK_NOT_ELAPSED();
     error TIMELOCK_NOT_STARTED();
+    error WRONG_STATE();
+    error NOT_PROPOSER();
+    error WRONG_DEPOSIT();    
 
     enum ProposalState {
         Pending,
@@ -16,117 +20,138 @@ contract ProposalEngine {
         Cancelled
     }
 
-    struct Proposal {
-        address to;
+    struct Proposal{
+        address target;
         uint256 value;
         bytes data;
-        bool executed;
+        address proposer;
         uint256 confirmations;
         ProposalState state;
-        uint256 submissionTime;
-        uint256 executionTime;
+        uint256 submittedAt;
+        uint256 executeAfter;
+        uint256 deposit; 
     }
 
-    address[] public owners;
+    address[] public governors;
     uint256 public threshold;
-    uint256 public txCount;
+    uint256 public proposalCount;
 
-    mapping(address => bool) public isOwner;
+    mapping(address => bool) public isGovernor;
     mapping(uint256 => mapping(address => bool)) public confirmed;
     mapping(uint256 => Proposal) public proposals;
 
     uint256 public constant TIMELOCK_DURATION = 1 hours;
+    uint256 public constant PROPOSAL_DEPOSIT = 0.01 ether;
 
-    event Submission(uint256 indexed txId);
-    event Confirmation(uint256 indexed txId, address indexed owner);
-    event Execution(uint256 indexed txId);
-
-    constructor(address[] memory _owners, uint256 _threshold) payable {
-        require(_owners.length > 0, "no owners");
-        require(_threshold > 0 && _threshold <= _owners.length, "invalid threshold");
+    constructor(address[] memory _governors, uint256 _threshold) payable {
+        require(_governors.length > 0, "no governors");
+        require(_threshold > 0 && _threshold <= _governors.length, "invalid threshold");
         threshold = _threshold;
 
-        for (uint256 i = 0; i < _owners.length; i++) {
-            address o = _owners[i];
-            require(o != address(0), "zero address owner");
-            require(!isOwner[o], "duplicate owner");
-            isOwner[o] = true;
-            owners.push(o);
+        for (uint256 i = 0; i < _governors.length; i++) {
+            address g = _governors[i];
+            require(g != address(0), "zero address governor");
+            require(!isGovernor[g], "duplicate governor");
+            isGovernor[g] = true;
+            governors.push(g);
         }
     }
 
-    modifier onlyOwner() {
-        if (!isOwner[msg.sender]) revert NOT_OWNER();
+    modifier onlyGovernor() {
+        if (!isGovernor[msg.sender]) revert NOT_GOVERNOR();
         _;
     }
 
-    function submitProposal(address to, uint256 value, bytes calldata data) external onlyOwner {
-        uint256 id = txCount++;
-        proposals[id] = Transaction({
-            to: to,
-            value: value,
-            data: data,
-            executed: false,
+    function submitProposal(address _target, uint256 _value, bytes calldata _data) external onlyGovernor() {
+        uint256 id = proposalCount++;
+        if (msg.value != PROPOSAL_DEPOSIT) revert WRONG_DEPOSIT();
+        proposals[id] = Proposal({
+            target: _target,
+            value: _value,
+            data: _data,
+            proposer: msg.sender,
             confirmations: 0,
-            submissionTime: block.timestamp,
-            executionTime: 0,
-            state: ProposalState.Pending
+            state: ProposalState.Pending,
+            submittedAt: block.timestamp,
+            executeAfter: 0,
+            deposit: msg.value
         });
 
         confirmed[id][msg.sender] = true;
         proposals[id].confirmations = 1;
 
         if (threshold == 1) {
-            proposals[id].executionTime = block.timestamp + TIMELOCK_DURATION;
+            proposals[id].state = ProposalState.Queued;
+            proposals[id].executeAfter = block.timestamp + TIMELOCK_DURATION;
+            emit ProposalQueued(id, proposals[id].executeAfter);
         }
 
-        emit Submission(id);
+        emit ProposalSubmitted(id, msg.sender);
     }
 
-    function confirmProposal(uint256 txId) external onlyOwner {
-        Proposal storage prop = proposals[txId];
-        if (prop.executed) revert ALREADY_EXECUTED();
-        if (confirmed[txId][msg.sender]) revert ALREADY_CONFIRMED();
+    function confirmProposal(uint256 proposalId) external onlyGovernor {
+        Proposal storage prop = proposals[proposalId];
 
-        confirmed[txId][msg.sender] = true;
+        if (prop.state != ProposalState.Pending) revert WRONG_STATE();
+        if (confirmed[proposalId][msg.sender]) revert ALREADY_CONFIRMED();
+
+        confirmed[proposalId][msg.sender] = true;
         prop.confirmations++;
 
-        if (prop.confirmations == threshold) {
-            prop.executionTime = block.timestamp + TIMELOCK_DURATION;
+        if (prop.confirmations >= threshold) {
             prop.state = ProposalState.Queued;
+            prop.executeAfter = block.timestamp + TIMELOCK_DURATION;
+            emit ProposalQueued(proposalId, prop.executeAfter);
         }
 
-        emit Confirmation(txId, msg.sender);
-    }
+        emit ProposalConfirmed(proposalId, msg.sender);
 
-    function executeProposal(uint256 txId) external virtual onlyOwner {
-        Proposal storage prop = proposals[txId];
-        if (prop.confirmations < threshold) revert NOT_ENOUGH_CONFIRMATIONS();
-        if (prop.executed) revert ALREADY_EXECUTED();
-        if (prop.executionTime == 0) revert TIMELOCK_NOT_STARTED();
-        if (block.timestamp < prop.executionTime) revert TIMELOCK_NOT_ELAPSED();
+        }
 
-        prop.executed = true;
+    function executeProposal(uint256 proposalId) external virtual onlyGovernor {
+        Proposal storage prop = proposals[proposalId];
+        if (prop.state != ProposalState.Queued) revert WRONG_STATE();
+        if (prop.executeAfter == 0) revert TIMELOCK_NOT_STARTED();
+        if (block.timestamp < prop.executeAfter) revert TIMELOCK_NOT_ELAPSED();
+
         prop.state = ProposalState.Executed;
+
+        (bool refund,) = prop.proposer.call{value: prop.deposit}("");
+        require(refund, "deposit refund failed");
+
         (bool success,) = prop.to.call{value: prop.value}(prop.data);
         require(success, "execution failed");
 
-        emit Execution(txId);
+        emit ProposalExecuted(proposalId);
     }
 
-    function queueProposal(uint256 txId) external onlyOwner {
-        Proposal storage prop = proposals[txId];
-        if (prop.executed) revert ALREADY_EXECUTED();
-        if (prop.confirmations < threshold) revert NOT_ENOUGH_CONFIRMATIONS();
+    // function queueProposal(uint256 txId) external onlyOwner {
+    //     Proposal storage prop = proposals[txId];
+    //     if (prop.executed) revert ALREADY_EXECUTED();
+    //     if (prop.confirmations < threshold) revert NOT_ENOUGH_CONFIRMATIONS();
 
-        prop.executionTime = block.timestamp + TIMELOCK_DURATION;
-        prop.state = ProposalState.Queued;
-    }
+    //     prop.executionTime = block.timestamp + TIMELOCK_DURATION;
+    //     prop.state = ProposalState.Queued;
+    // }
 
-    function cancelProposal(uint256 txId) external onlyOwner {
-        Proposal storage prop = proposals[txId];
-        if (prop.executed) revert ALREADY_EXECUTED();
-        prop.executed = true;
+    function cancelProposal(uint256 proposalId) external onlyGovernor {
+        Proposal storage prop = proposals[proposalId];
+        if (prop.state == ProposalState.Executed) revert ALREADY_EXECUTED();
+        if (prop.state == ProposalState.Cancelled) revert WRONG_STATE();
+        if (msg.sender != prop.proposer) revert NOT_PROPOSER();
+        
         prop.state = ProposalState.Cancelled;
+
+        (bool refund,) = prop.proposer.call{value: prop.deposit}("");
+        require(refund, "deposit return failed");
+
+        emit ProposalCancelled(proposalId);
     }
+
+    function getState(uint256 proposalId) external view returns (ProposalState) {
+        return proposals[proposalId].state;
+    }
+
+    receive() external payable {}
+        
 }

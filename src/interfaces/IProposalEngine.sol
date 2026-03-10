@@ -1,11 +1,19 @@
-// SPDX-License-Identifier: UNLICENSED
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.33;
 
 interface IProposalEngine {
-    function submitProposal(address _to, uint256 _value, bytes calldata _data) external returns (uint256);
 
-    function confirmProposal(uint256 _proposalId) external;
+    enum ProposalState { Pending, Queued, Executed, Cancelled }
 
-    function executeProposal(uint256 _proposalId) external;
-    function cancelProposal(uint256 _proposalId) external;
+    event ProposalSubmitted(uint256 indexed id, address indexed proposer);
+    event ProposalConfirmed(uint256 indexed id, address indexed governor);
+    event ProposalQueued(uint256 indexed id, uint256 executeAfter);
+    event ProposalExecuted(uint256 indexed id);
+    event ProposalCancelled(uint256 indexed id);
+
+    function submitProposal(address target, uint256 value, bytes calldata data) external returns (uint256 id);
+    function confirmProposal(uint256 proposalId) external;
+    function executeProposal(uint256 proposalId) external;
+    function cancelProposal(uint256 proposalId) external;
+    function getState(uint256 proposalId) external view returns (ProposalState);
 }
