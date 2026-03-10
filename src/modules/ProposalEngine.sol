@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.33;
+
 import "../interfaces/IProposalEngine.sol";
 
 contract ProposalEngine is IProposalEngine {
@@ -11,16 +12,11 @@ contract ProposalEngine is IProposalEngine {
     error TIMELOCK_NOT_STARTED();
     error WRONG_STATE();
     error NOT_PROPOSER();
-    error WRONG_DEPOSIT();    
+    error WRONG_DEPOSIT();
+    error UPGRADE_VALUE_FORBIDDEN();
+    error UPGRADE_DATA_REQUIRED();
 
-    enum ProposalState {
-        Pending,
-        Queued,
-        Executed,
-        Cancelled
-    }
-
-    struct Proposal{
+    struct Proposal {
         address target;
         uint256 value;
         bytes data;
@@ -29,7 +25,8 @@ contract ProposalEngine is IProposalEngine {
         ProposalState state;
         uint256 submittedAt;
         uint256 executeAfter;
-        uint256 deposit; 
+        uint256 deposit;
+        ActionType actionType;
     }
 
     address[] public governors;
@@ -62,9 +59,20 @@ contract ProposalEngine is IProposalEngine {
         _;
     }
 
-    function submitProposal(address _target, uint256 _value, bytes calldata _data) external onlyGovernor() {
-        uint256 id = proposalCount++;
+    function submitProposal(address _target, uint256 _value, bytes calldata _data, ActionType _actionType)
+        public
+        payable
+        onlyGovernor
+        returns (uint256 id)
+    {
         if (msg.value != PROPOSAL_DEPOSIT) revert WRONG_DEPOSIT();
+
+        if (_actionType == ActionType.Upgrade) {
+            if (_value != 0) revert UPGRADE_VALUE_FORBIDDEN();
+            if (_data.length < 4) revert UPGRADE_DATA_REQUIRED();
+        }
+
+        id = proposalCount++;
         proposals[id] = Proposal({
             target: _target,
             value: _value,
@@ -74,7 +82,8 @@ contract ProposalEngine is IProposalEngine {
             state: ProposalState.Pending,
             submittedAt: block.timestamp,
             executeAfter: 0,
-            deposit: msg.value
+            deposit: msg.value,
+            actionType: _actionType
         });
 
         confirmed[id][msg.sender] = true;
@@ -87,9 +96,10 @@ contract ProposalEngine is IProposalEngine {
         }
 
         emit ProposalSubmitted(id, msg.sender);
+        return id;
     }
 
-    function confirmProposal(uint256 proposalId) external onlyGovernor {
+    function confirmProposal(uint256 proposalId) public onlyGovernor {
         Proposal storage prop = proposals[proposalId];
 
         if (prop.state != ProposalState.Pending) revert WRONG_STATE();
@@ -105,8 +115,7 @@ contract ProposalEngine is IProposalEngine {
         }
 
         emit ProposalConfirmed(proposalId, msg.sender);
-
-        }
+    }
 
     function executeProposal(uint256 proposalId) external virtual onlyGovernor {
         Proposal storage prop = proposals[proposalId];
@@ -116,30 +125,21 @@ contract ProposalEngine is IProposalEngine {
 
         prop.state = ProposalState.Executed;
 
+        (bool success,) = prop.target.call{value: prop.value}(prop.data);
+        require(success, "execution failed");
+
         (bool refund,) = prop.proposer.call{value: prop.deposit}("");
         require(refund, "deposit refund failed");
-
-        (bool success,) = prop.to.call{value: prop.value}(prop.data);
-        require(success, "execution failed");
 
         emit ProposalExecuted(proposalId);
     }
 
-    // function queueProposal(uint256 txId) external onlyOwner {
-    //     Proposal storage prop = proposals[txId];
-    //     if (prop.executed) revert ALREADY_EXECUTED();
-    //     if (prop.confirmations < threshold) revert NOT_ENOUGH_CONFIRMATIONS();
-
-    //     prop.executionTime = block.timestamp + TIMELOCK_DURATION;
-    //     prop.state = ProposalState.Queued;
-    // }
-
-    function cancelProposal(uint256 proposalId) external onlyGovernor {
+    function cancelProposal(uint256 proposalId) public onlyGovernor {
         Proposal storage prop = proposals[proposalId];
         if (prop.state == ProposalState.Executed) revert ALREADY_EXECUTED();
         if (prop.state == ProposalState.Cancelled) revert WRONG_STATE();
         if (msg.sender != prop.proposer) revert NOT_PROPOSER();
-        
+
         prop.state = ProposalState.Cancelled;
 
         (bool refund,) = prop.proposer.call{value: prop.deposit}("");
@@ -148,10 +148,9 @@ contract ProposalEngine is IProposalEngine {
         emit ProposalCancelled(proposalId);
     }
 
-    function getState(uint256 proposalId) external view returns (ProposalState) {
+    function getState(uint256 proposalId) public view returns (ProposalState) {
         return proposals[proposalId].state;
     }
 
-    receive() external payable {}
-        
+    receive() external payable virtual {}
 }
