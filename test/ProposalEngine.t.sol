@@ -60,7 +60,7 @@ contract ProposalEngineTest is Test {
         address recipient = makeAddr("Recipient");
 
         vm.prank(ganiyat);
-        uint256 id = engine.submitProposal{value: DEPOSIT}(recipient, 1 ether, "", IProposalEngine.ActionType.Transfer);
+        uint256 id = engine.submitProposal{value: DEPOSIT}(recipient, 1 ether, "", IProposalEngine.ActionType.Call);
         assertEq(uint256(engine.getState(id)), uint256(IProposalEngine.ProposalState.Pending));
 
         vm.prank(nursca);
@@ -85,7 +85,7 @@ contract ProposalEngineTest is Test {
 
         vm.prank(ganiyat);
         uint256 id = engine.submitProposal{value: DEPOSIT}(
-            address(attacker), 0.1 ether, "", IProposalEngine.ActionType.Transfer
+            address(attacker), 0.1 ether, "", IProposalEngine.ActionType.Call
         );
 
         vm.prank(nursca);
@@ -102,7 +102,7 @@ contract ProposalEngineTest is Test {
 
     function testExploit_PrematureExecution() public {
         vm.prank(ganiyat);
-        uint256 id = engine.submitProposal{value: DEPOSIT}(nursca, 0, "", IProposalEngine.ActionType.Transfer);
+        uint256 id = engine.submitProposal{value: DEPOSIT}(nursca, 0, "", IProposalEngine.ActionType.Call);
 
         vm.prank(nursca);
         engine.confirmProposal(id);
@@ -132,12 +132,12 @@ contract ProposalEngineTest is Test {
     function testExploit_NonGovernorSubmit() public {
         vm.prank(feyi);
         vm.expectRevert();
-        engine.submitProposal{value: DEPOSIT}(ganiyat, 0, "", IProposalEngine.ActionType.Transfer);
+        engine.submitProposal{value: DEPOSIT}(ganiyat, 0, "", IProposalEngine.ActionType.Call);
     }
 
     function testExploit_NonGovernorExecute() public {
         vm.prank(ganiyat);
-        uint256 id = engine.submitProposal{value: DEPOSIT}(nursca, 0, "", IProposalEngine.ActionType.Transfer);
+        uint256 id = engine.submitProposal{value: DEPOSIT}(nursca, 0, "", IProposalEngine.ActionType.Call);
         vm.prank(nursca);
         engine.confirmProposal(id);
         vm.warp(block.timestamp + 1 hours + 1);
@@ -148,7 +148,7 @@ contract ProposalEngineTest is Test {
 
     function testExploit_ExecutePendingProposal() public {
         vm.prank(ganiyat);
-        uint256 id = engine.submitProposal{value: DEPOSIT}(nursca, 0, "", IProposalEngine.ActionType.Transfer);
+        uint256 id = engine.submitProposal{value: DEPOSIT}(nursca, 0, "", IProposalEngine.ActionType.Call);
         vm.warp(block.timestamp + 1 hours + 1);
         vm.prank(ganiyat);
         vm.expectRevert(ProposalEngine.WRONG_STATE.selector);
@@ -157,7 +157,7 @@ contract ProposalEngineTest is Test {
 
     function testExploit_DoubleConfirm() public {
         vm.prank(ganiyat);
-        uint256 id = engine.submitProposal{value: DEPOSIT}(nursca, 0, "", IProposalEngine.ActionType.Transfer);
+        uint256 id = engine.submitProposal{value: DEPOSIT}(nursca, 0, "", IProposalEngine.ActionType.Call);
 
         vm.prank(nursca);
         engine.confirmProposal(id);
@@ -170,7 +170,7 @@ contract ProposalEngineTest is Test {
     function testExploit_SubmitWithoutDeposit() public {
         vm.prank(ganiyat);
         vm.expectRevert(ProposalEngine.WRONG_DEPOSIT.selector);
-        engine.submitProposal{value: 0}(nursca, 0, "", IProposalEngine.ActionType.Transfer);
+        engine.submitProposal{value: 0}(nursca, 0, "", IProposalEngine.ActionType.Call);
     }
 
     function testExploit_CancelExecutedProposal() public {
