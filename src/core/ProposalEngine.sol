@@ -2,12 +2,14 @@
 pragma solidity ^0.8.33;
 
 import "../interfaces/IProposalEngine.sol";
+import "../modules/GovernanceGuard.sol";
+import "../modules/SignatureAuth.sol";
+import "../modules/MerkleDistributor.sol";
 
-contract ProposalEngine is IProposalEngine {
+contract ProposalEngine is IProposalEngine, GovernanceGuard, SignatureAuth, MerkleDistributor {
     error NOT_GOVERNOR();
     error ALREADY_CONFIRMED();
     error ALREADY_EXECUTED();
-    error NOT_ENOUGH_CONFIRMATIONS();
     error TIMELOCK_NOT_ELAPSED();
     error TIMELOCK_NOT_STARTED();
     error WRONG_STATE();
@@ -38,9 +40,8 @@ contract ProposalEngine is IProposalEngine {
     mapping(uint256 => Proposal) public proposals;
 
     uint256 public constant TIMELOCK_DURATION = 1 hours;
-    uint256 public constant PROPOSAL_DEPOSIT = 0.01 ether;
 
-    constructor(address[] memory _governors, uint256 _threshold) payable {
+    constructor(address[] memory _governors, uint256 _threshold) payable SignatureAuth() {
         require(_governors.length > 0, "no governors");
         require(_threshold > 0 && _threshold <= _governors.length, "invalid threshold");
         threshold = _threshold;
@@ -52,6 +53,8 @@ contract ProposalEngine is IProposalEngine {
             isGovernor[g] = true;
             governors.push(g);
         }
+
+        _setMerkleAdmin(address(this));
     }
 
     modifier onlyGovernor() {
@@ -73,6 +76,7 @@ contract ProposalEngine is IProposalEngine {
         }
 
         id = proposalCount++;
+        _lockDeposit(id, msg.sender);
         proposals[id] = Proposal({
             target: _target,
             value: _value,
@@ -118,18 +122,33 @@ contract ProposalEngine is IProposalEngine {
     }
 
     function executeProposal(uint256 proposalId) external virtual onlyGovernor {
+        _executeProposal(proposalId);
+    }
+
+    function executeProposalWithSignature(uint256 proposalId, address signer, bytes calldata signature)
+        external
+        virtual
+    {
+        if (!isGovernor[signer]) revert NOT_GOVERNOR();
+        bytes32 action = keccak256(abi.encodePacked("execute", proposalId));
+        _verifyAndConsume(signer, action, signature);
+        _executeProposal(proposalId);
+    }
+
+    function _executeProposal(uint256 proposalId) internal {
         Proposal storage prop = proposals[proposalId];
         if (prop.state != ProposalState.Queued) revert WRONG_STATE();
         if (prop.executeAfter == 0) revert TIMELOCK_NOT_STARTED();
         if (block.timestamp < prop.executeAfter) revert TIMELOCK_NOT_ELAPSED();
+
+        recordSpend(prop.value);
 
         prop.state = ProposalState.Executed;
 
         (bool success,) = prop.target.call{value: prop.value}(prop.data);
         require(success, "execution failed");
 
-        (bool refund,) = prop.proposer.call{value: prop.deposit}("");
-        require(refund, "deposit refund failed");
+        _returnDeposit(proposalId);
 
         emit ProposalExecuted(proposalId);
     }
@@ -142,10 +161,13 @@ contract ProposalEngine is IProposalEngine {
 
         prop.state = ProposalState.Cancelled;
 
-        (bool refund,) = prop.proposer.call{value: prop.deposit}("");
-        require(refund, "deposit return failed");
+        _returnDeposit(proposalId);
 
         emit ProposalCancelled(proposalId);
+    }
+
+    function setMerkleRoot(bytes32 root) external override onlyGovernor {
+        _setMerkleRoot(root);
     }
 
     function getState(uint256 proposalId) public view returns (ProposalState) {

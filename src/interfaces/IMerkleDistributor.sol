@@ -8,5 +8,4 @@ interface IMerkleDistributor {
     function setMerkleRoot(bytes32 root) external;
     function claim(bytes32[] calldata proof, uint256 amount) external;
     function hasClaimed(uint256 round, address account) external view returns (bool);
-    function currentRound() external view returns (uint256);
 }

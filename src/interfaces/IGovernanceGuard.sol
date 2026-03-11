@@ -7,6 +7,5 @@ interface IGovernanceGuard {
     function checkDailyLimit(uint256 amount) external view returns (bool);
     function recordSpend(uint256 amount) external;
     function checkAndRecordWithdrawal(uint256 amount) external;
-    function maxDailyBps() external view returns (uint256);
 }
 

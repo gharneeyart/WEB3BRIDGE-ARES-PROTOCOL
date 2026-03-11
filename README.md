@@ -1,66 +1,74 @@
-## Foundry
+# ARES Protocol — Protocol Specification
+## Proposal Lifecycle
 
-**Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
+The ARES Treasury enforces a structured lifecycle for all governance proposals. Each proposal represents a treasury action (transfer, call, or upgrade) and moves through the following stages:
 
-Foundry consists of:
+1. **Proposal Creation**
 
-- **Forge**: Ethereum testing framework (like Truffle, Hardhat and DappTools).
-- **Cast**: Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
-- **Anvil**: Local Ethereum node, akin to Ganache, Hardhat Network.
-- **Chisel**: Fast, utilitarian, and verbose solidity REPL.
+A governor calls submitProposal(target, value, data, actionType) and deposits 0.01 ETH.
 
-## Documentation
+The contract verifies:
 
-https://book.getfoundry.sh/
+Caller is a governor (onlyGovernor).
 
-## Usage
+Proposal deposit is provided.
 
-### Build
+Action-specific constraints (e.g., upgrades require data, no ETH value).
 
-```shell
-$ forge build
-```
+The proposal is assigned a unique ID and enters the Pending state.
 
-### Test
+The submitting governor is automatically counted as the first confirmation.
 
-```shell
-$ forge test
-```
+2. **Proposal Approval**
 
-### Format
+Governors call confirmProposal(proposalId) to approve a Pending proposal.
 
-```shell
-$ forge fmt
-```
+Each governor can confirm a proposal only once.
 
-### Gas Snapshots
+Once the number of confirmations reaches the required threshold
 
-```shell
-$ forge snapshot
-```
+Proposal state changes from Pending → Queued.
 
-### Anvil
+Timelock begins (executeAfter = block.timestamp + 1 hour).
 
-```shell
-$ anvil
-```
+Confirmations beyond the threshold are rejected to prevent double-counting.
 
-### Deploy
+3. **Queueing and Timelock**
 
-```shell
-$ forge script script/Counter.s.sol:CounterScript --rpc-url <your_rpc_url> --private-key <your_private_key>
-```
+A proposal in Queued state cannot execute until the timelock expires.
 
-### Cast
+The executeAfter timestamp enforces a delay, providing governance review time.
 
-```shell
-$ cast <subcommand>
-```
+Any attempt to execute before executeAfter reverts.
 
-### Help
+4. **Execution**
 
-```shell
-$ forge --help
-$ anvil --help
-$ cast --help
-```
+Any governor can call executeProposal(proposalId) once the timelock has elapsed.
+
+The protocol performs Checks-Effects-Interactions:
+
+The proposal state is set to Executed before calling external contracts.
+
+ETH or calldata is sent to the target address.
+
+Proposal deposit is refunded to the proposer.
+
+After execution:
+
+Proposal is immutable; replay is prevented by state checks.
+
+The proposal cannot be re-executed.
+
+5. **Cancellation**
+
+Only the original proposer can cancel a Pending or Queued proposal.
+
+The proposer calls cancelProposal(proposalId).
+
+Upon cancellation:
+
+Proposal state becomes Cancelled.
+
+Deposit is refunded.
+
+Cancelled proposals cannot be executed, and all state-changing calls after cancellation are rejected.

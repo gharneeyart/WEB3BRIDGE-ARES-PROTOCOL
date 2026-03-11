@@ -4,7 +4,7 @@ pragma solidity ^0.8.33;
 import {IGovernanceGuard} from "../interfaces/IGovernanceGuard.sol";
 
 abstract contract GovernanceGuard is IGovernanceGuard {
-    uint256 public constant maxDailyBps = 1000; // 10%
+    uint256 public constant maxDailyBps = 1000;
     uint256 public constant PROPOSAL_DEPOSIT = 0.01 ether;
 
     mapping(uint256 => uint256) private _dailySpend;
