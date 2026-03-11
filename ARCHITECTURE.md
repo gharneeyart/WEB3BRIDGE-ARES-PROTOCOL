@@ -2,7 +2,29 @@
 
 ## Overview
 
-ARES Treasury is a secure treasury execution system designed to coordinate protocol governance over treasury assets. The system is organized into four independent modules, each responsible for a specific concern. These modules are combined in the ProposalEngine contract through inheritance, allowing the protocol to separate security responsibilities while maintaining a single execution entry point.
+ARES Treasury is a secure treasury execution system designed to coordinate protocol governance over treasury assets.
+
+### Implementation
+1. **Propose treasury transactions** - Multisig
+2. **Delay execution** - Using Timelock
+3. **Verify authorization** - EIP-712 signatures
+4. **Distribute funds to contributors** - Merkleproof
+5. **Prevent governance attacks** - Withdrawal limits and Proposal deposit
+
+### System Components
+1. Transaction Proposal System: Proposal cannot be executed immediately, added a commit phase(pending, then queued before execution), proposal lifecycle and action type.
+
+2. Cryptographic Authorization Layer: Cross-chain replay(chainId), Signature replay(nonce) and Signature malleability(verifyingContract).
+
+3. Time-Delayed Execution Engine: Reentrancy bypass(state update before .call), Timestamp manipulation(1 hour) and Proposal replay(prop.state = ProposalState.Executed).
+
+4. Contributor Reward Distribution: Users must claim independently(Merkle proof), The system must prevent double claims(round-based system) and The system must support root updates.
+
+5. Governance Attack Mitigation: Proposal griefing(proposal deposit) and Large treasury drains
+
+
+The system is organized into three independent modules, each responsible for a specific concern. 
+These modules are combined in the ProposalEngine contract through inheritance, allowing the protocol to separate security responsibilities while maintaining a single execution entry point.
 
 ```
 AresTreasury (src/core/ProposalEngine.sol)
@@ -23,8 +45,8 @@ Libraries:  src/libraries/SafeTransfer.sol
 ### 1. ProposalEngine 
 Manages the full lifecycle of treasury actions:
 `Pending` → `Queued` → `Executed` (or `Cancelled` at any point before Executed)
-A proposal enters the Pending state immediately it's submitted by a governor. While in this state, other governors will confirm the proposal. Once the number of confirmations reaches the required threshold, the proposal is moved into the Queued state and a one-hour timelock begins.
-After the timelock expires, any governor can call executeProposal(). The proposal state is updated to Executed before the external call is performed, preventing reentrancy attacks. A proposal can also be Cancelled by its proposer at any time before execution.
+A proposal enters the Pending state immediately after submission by a governor. While in this state, other governors can confirm the proposal. Once the number of confirmations reaches the required threshold, the proposal is moved into the Queued state and a one-hour timelock begins.
+After the timelock expires, any governor can call executeProposal(). The proposal state is updated to Executed before the external call is performed, preventing reentrancy attacks. A proposal can also be cancelled by its proposer at any time before execution.
 This queue-based execution model ensures that treasury actions cannot occur instantly, giving governors and the community time to react to potentially malicious proposals.
 
 ### 2. SignatureAuth
